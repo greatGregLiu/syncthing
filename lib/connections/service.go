@@ -437,10 +437,6 @@ func (s *Service) VerifyConfiguration(from, to config.Configuration) error {
 }
 
 func (s *Service) CommitConfiguration(from, to config.Configuration) bool {
-	// We require a restart if a device as been removed.
-
-	restart := false
-
 	newDevices := make(map[protocol.DeviceID]bool, len(to.Devices))
 	for _, dev := range to.Devices {
 		newDevices[dev.DeviceID] = true
@@ -448,7 +444,12 @@ func (s *Service) CommitConfiguration(from, to config.Configuration) bool {
 
 	for _, dev := range from.Devices {
 		if !newDevices[dev.DeviceID] {
-			restart = true
+			s.curConMut.Lock()
+			delete(s.currentConnection, dev.DeviceID)
+			s.curConMut.Unlock()
+			warningLimitersMut.Lock()
+			delete(warningLimiters, dev.DeviceID)
+			warningLimitersMut.Unlock()
 		}
 	}
 
@@ -500,7 +501,7 @@ func (s *Service) CommitConfiguration(from, to config.Configuration) bool {
 		s.natServiceToken = nil
 	}
 
-	return !restart
+	return true
 }
 
 func (s *Service) AllAddresses() []string {
