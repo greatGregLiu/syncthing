@@ -172,13 +172,13 @@ func (m *Model) StartDeadlockDetector(timeout time.Duration) {
 // StartFolder constructs the folder service and starts it.
 func (m *Model) StartFolder(folder string) {
 	m.fmut.Lock()
-	folderType := m.startFolderUnlocked(folder)
+	folderType := m.startFolderLocked(folder)
 	m.fmut.Unlock()
 
 	l.Infoln("Ready to synchronize", folder, fmt.Sprintf("(%s)", folderType))
 }
 
-func (m *Model) startFolderUnlocked(folder string) config.FolderType {
+func (m *Model) startFolderLocked(folder string) config.FolderType {
 	cfg, ok := m.folderCfgs[folder]
 	if !ok {
 		panic("cannot start nonexistent folder " + folder)
@@ -287,11 +287,11 @@ func (m *Model) AddFolder(cfg config.FolderConfiguration) {
 	}
 
 	m.fmut.Lock()
-	m.addFolderUnlocked(cfg)
+	m.addFolderLocked(cfg)
 	m.fmut.Unlock()
 }
 
-func (m *Model) addFolderUnlocked(cfg config.FolderConfiguration) {
+func (m *Model) addFolderLocked(cfg config.FolderConfiguration) {
 	m.folderCfgs[cfg.ID] = cfg
 	m.folderFiles[cfg.ID] = db.NewFileSet(cfg.ID, m.db)
 
@@ -312,7 +312,7 @@ func (m *Model) RemoveFolder(folder string) {
 	m.fmut.Lock()
 	m.pmut.Lock()
 
-	m.tearDownFolderUnlocked(folder)
+	m.tearDownFolderLocked(folder)
 	// Remove it from the database
 	db.DropFolder(m.db, folder)
 
@@ -320,7 +320,7 @@ func (m *Model) RemoveFolder(folder string) {
 	m.fmut.Unlock()
 }
 
-func (m *Model) tearDownFolderUnlocked(folder string) {
+func (m *Model) tearDownFolderLocked(folder string) {
 	// Stop the services running for this folder
 	for _, id := range m.folderRunnerTokens[folder] {
 		m.Remove(id)
@@ -354,9 +354,9 @@ func (m *Model) RestartFolder(cfg config.FolderConfiguration) {
 	m.fmut.Lock()
 	m.pmut.Lock()
 
-	m.tearDownFolderUnlocked(cfg.ID)
-	m.addFolderUnlocked(cfg)
-	folderType := m.startFolderUnlocked(cfg.ID)
+	m.tearDownFolderLocked(cfg.ID)
+	m.addFolderLocked(cfg)
+	folderType := m.startFolderLocked(cfg.ID)
 
 	m.pmut.Unlock()
 	m.fmut.Unlock()
@@ -692,10 +692,10 @@ func (m *Model) IndexUpdate(deviceID protocol.DeviceID, folder string, fs []prot
 func (m *Model) folderSharedWith(folder string, deviceID protocol.DeviceID) bool {
 	m.fmut.RLock()
 	defer m.fmut.RUnlock()
-	return m.folderSharedWithUnlocked(folder, deviceID)
+	return m.folderSharedWithLocked(folder, deviceID)
 }
 
-func (m *Model) folderSharedWithUnlocked(folder string, deviceID protocol.DeviceID) bool {
+func (m *Model) folderSharedWithLocked(folder string, deviceID protocol.DeviceID) bool {
 	for _, nfolder := range m.deviceFolders[deviceID] {
 		if nfolder == folder {
 			return true
@@ -723,7 +723,7 @@ func (m *Model) ClusterConfig(deviceID protocol.DeviceID, cm protocol.ClusterCon
 
 	m.fmut.Lock()
 	for _, folder := range cm.Folders {
-		if !m.folderSharedWithUnlocked(folder.ID, deviceID) {
+		if !m.folderSharedWithLocked(folder.ID, deviceID) {
 			events.Default.Log(events.FolderRejected, map[string]string{
 				"folder":      folder.ID,
 				"folderLabel": folder.Label,
@@ -919,7 +919,6 @@ func (m *Model) Close(device protocol.DeviceID, err error) {
 	delete(m.helloMessages, device)
 	delete(m.deviceDownloads, device)
 	m.pmut.Unlock()
-
 }
 
 // Request returns the specified data segment by reading it from local disk.
@@ -2177,7 +2176,6 @@ func (m *Model) CommitConfiguration(from, to config.Configuration) bool {
 
 		if !reflect.DeepEqual(fromCfgCopy, toCfgCopy) {
 			m.RestartFolder(toCfg)
-			l.Debugln(m, "restarting folder", folderID, "as configuration differs")
 		}
 	}
 
@@ -2224,16 +2222,6 @@ func mapDevices(devices []protocol.DeviceID) map[protocol.DeviceID]struct{} {
 	m := make(map[protocol.DeviceID]struct{}, len(devices))
 	for _, dev := range devices {
 		m[dev] = struct{}{}
-	}
-	return m
-}
-
-// mapDeviceCfgs returns a map of device ID to nothing for the given slice of
-// device configurations.
-func mapDeviceCfgs(devices []config.DeviceConfiguration) map[protocol.DeviceID]struct{} {
-	m := make(map[protocol.DeviceID]struct{}, len(devices))
-	for _, dev := range devices {
-		m[dev.DeviceID] = struct{}{}
 	}
 	return m
 }
